@@ -1,0 +1,914 @@
+# Stack Overflow Clone CI/CD with DevSecOps
+
+==================================================
+Step 1: Setting up AWS EC2 Instance
+==================================================
+
+--> Launch an EC2 Instance with Ubuntu AMI
+--> Instance Type: m7i-flex.large or t2.large
+--> Storage: 50 GB
+--> Configure Security Group:
+    - Port 22   → SSH
+    - Port 8080 → Jenkins
+    - Port 9000 → SonarQube
+--> Create and Attach IAM Role with AdministratorAccess Permission
+--> Connect to the EC2 Instance using SSH
+
+==================================================
+Step 2: Installation
+==================================================
+
+Script 1: Install Terraform and AWS CLI
+-------------------------------------------------
+
+
+#!/bin/bash
+
+# ==========================================
+# Install Terraform
+# ==========================================
+
+sudo apt update -y
+
+sudo apt install -y wget curl gnupg software-properties-common unzip
+
+wget -O- https://apt.releases.hashicorp.com/gpg | \
+gpg --dearmor | \
+sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+sudo tee /etc/apt/sources.list.d/hashicorp.list
+
+sudo apt update -y
+
+sudo apt install terraform -y
+
+terraform -version
+
+
+# ==========================================
+# Install AWS CLI
+# ==========================================
+
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
+-o "awscliv2.zip"
+
+unzip awscliv2.zip
+
+sudo ./aws/install
+
+aws --version
+
+--------------------------------------------------
+
+
+Script 2: Install Java, Jenkins, and Docker
+-------------------------------------------
+
+
+#!/bin/bash
+
+sudo apt update -y
+
+# ==========================================
+# Install Java 21
+# ==========================================
+
+sudo apt install -y \
+openjdk-21-jdk \
+wget \
+curl \
+gnupg \
+ca-certificates \
+apt-transport-https \
+software-properties-common
+
+# Verify Java
+java -version
+
+
+# ==========================================
+# Jenkins WAR Installation
+# ==========================================
+
+# Remove broken Jenkins repo if exists
+sudo rm -f /etc/apt/sources.list.d/jenkins.list
+
+# Create Jenkins directory
+sudo mkdir -p /opt/jenkins
+
+cd /opt/jenkins
+
+# Download Jenkins WAR
+echo "Downloading Jenkins WAR..."
+
+sudo wget https://get.jenkins.io/war-stable/2.555.2/jenkins.war
+
+# Permissions
+sudo chmod 755 /opt/jenkins/jenkins.war
+
+# Create Jenkins user
+sudo useradd -m -d /var/lib/jenkins -s /bin/bash jenkins || true
+
+# Start Jenkins
+echo "Starting Jenkins..."
+
+nohup java -jar /opt/jenkins/jenkins.war \
+> /opt/jenkins/jenkins.log 2>&1 &
+
+sleep 15
+
+echo "Jenkins Process:"
+ps -ef | grep jenkins.war | grep -v grep
+
+# ==========================================
+# Install Docker
+# ==========================================
+
+sudo apt install -y ca-certificates curl gnupg
+
+sudo install -m 0755 -d /etc/apt/keyrings
+
+# Remove old Docker key
+sudo rm -f /etc/apt/keyrings/docker.gpg
+
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo \
+"deb [arch=$(dpkg --print-architecture) \
+signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/ubuntu \
+$(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt update -y
+
+sudo apt install -y \
+docker-ce \
+docker-ce-cli \
+containerd.io \
+docker-buildx-plugin \
+docker-compose-plugin
+
+# Enable Docker
+sudo systemctl enable docker
+sudo systemctl start docker
+
+# Add users to Docker group
+sudo usermod -aG docker ubuntu
+
+sudo usermod -aG docker jenkins
+
+# Refresh group
+newgrp docker
+
+# Verify Docker
+docker --version
+
+
+--------------------------------------------------
+
+Script 3: Install Trivy
+-------------------------------
+
+
+#!/bin/bash
+
+# ==========================================
+# Install Trivy
+# ==========================================
+
+sudo apt update -y
+
+sudo apt install wget apt-transport-https gnupg lsb-release -y
+
+wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | \
+gpg --dearmor | \
+sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+
+echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] \
+https://aquasecurity.github.io/trivy-repo/deb \
+$(lsb_release -sc) main" | \
+sudo tee /etc/apt/sources.list.d/trivy.list
+
+sudo apt update -y
+
+sudo apt install trivy -y
+
+trivy --version
+
+
+==================================================
+step 3: Create & Configure Kops cluster
+==================================================
+
+# Configure PATH
+
+Edit the bash profile:
+
+vi ~/.bashrc
+
+Add the following line:
+
+export PATH=$PATH:/usr/local/bin/
+
+Reload the profile:
+
+source ~/.bashrc
+
+----------------------------------
+
+# Generate SSH Key
+
+Generate SSH key pair:
+
+ssh-keygen
+
+Copy the public key:
+
+cp ~/.ssh/id_ed25519.pub my-keypair.pub
+
+Set permissions:
+
+chmod 600 my-keypair.pub
+
+----------------------------------
+
+# Create Kops Installation Script:
+
+
+vi kops.sh
+
+Paste the following script:
+
+
+#!/bin/bash
+
+# Install Required Packages
+
+sudo apt update -y
+
+sudo apt install wget curl unzip -y
+
+# Install kubectl
+
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+
+# Install KOPS
+
+wget https://github.com/kubernetes/kops/releases/download/v1.32.0/kops-linux-amd64
+
+# Make Executable
+
+chmod +x kubectl kops-linux-amd64
+
+# Move Binaries
+
+sudo mv kubectl /usr/local/bin/kubectl
+
+sudo mv kops-linux-amd64 /usr/local/bin/kops
+
+# Verify Installation
+
+kubectl version --client
+
+kops version
+
+# Create S3 Bucket
+
+aws s3api create-bucket --bucket devsecops-stackflow-bucket-1 --region ap-south-1 --create-bucket-configuration LocationConstraint=ap-south-1
+
+# Enable Versioning
+
+aws s3api put-bucket-versioning --bucket devsecops-stackflow-bucket-1 --region ap-south-1 --versioning-configuration Status=Enabled
+
+# Configure KOPS State Store
+
+export KOPS_STATE_STORE=s3://devsecops-stackflow-bucket-1
+
+# Create Cluster
+
+kops create cluster --name=vivek3.k8s.local --zones=ap-south-1a,ap-south-1b --control-plane-count=1 --control-plane-size=m7i-flex.large --node-count=2 --node-size=c7i-flex.large --node-volume-size=20 --control-plane-volume-size=20 --ssh-public-key=my-keypair.pub --networking=calico --topology=public
+
+# Deploy Cluster
+
+kops update cluster --name vivek3.k8s.local --yes --admin
+
+
+----------------------------------
+
+
+# Configure Kops State Store
+
+Set the Kops state store:
+
+export KOPS_STATE_STORE=s3://devsecops-stackflow-bucket-1
+
+Verify:
+
+echo $KOPS_STATE_STORE
+
+----------------------------------
+
+# Validate Cluster
+
+kops validate cluster --wait 15m
+
+----------------------------------
+
+# Verify Cluster Resources
+
+kops get cluster
+
+Check nodes:
+
+kubectl get nodes
+
+Detailed node information:
+
+kubectl get nodes -o wide
+
+View all pods:
+
+kubectl get pods -A
+
+----------------------------------
+
+# View Cluster Information:
+
+kubectl cluster-info
+
+----------------------------------
+
+# Delete Kops Cluster:
+
+kops delete cluster --name vivek3.k8s.local --yes
+
+
+=====================================================================================
+Step 4: Monitoring Kops Kubernetes Cluster Using Prometheus and Grafana
+=====================================================================================
+
+
+# 1: Verify Kubernetes Cluster
+
+Run the following command to verify that all nodes are available and in Ready state:
+
+kubectl get nodes
+
+# 2: Install Helm
+
+Install Helm:
+
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+Verify Helm installation:
+
+helm version
+
+# 3: Add Prometheus Helm Repository
+
+Add the Prometheus Community repository:
+
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+
+Update Helm repositories:
+
+helm repo update
+
+# 4: Create Monitoring Namespace
+
+Create a dedicated namespace for monitoring components:
+
+kubectl create namespace monitoring
+
+# 5: Install kube-prometheus-stack
+
+helm install monitoring prometheus-community/kube-prometheus-stack -n monitoring
+
+Components Installed:
+
+* Prometheus
+* Grafana
+* Alertmanager
+* kube-state-metrics
+* Node Exporter
+* Kubernetes Exporters
+
+# 6: Verify Installation
+
+Check all monitoring pods:
+
+kubectl get pods -n monitoring
+
+Ensure all pods are in Running state before proceeding.
+
+# 7: Expose Grafana Using NodePort - Convert Grafana service to NodePort:
+
+kubectl patch svc monitoring-grafana -n monitoring -p '{"spec":{"type":"NodePort"}}'
+
+Verify the assigned NodePort:
+
+kubectl get svc -n monitoring
+
+Example Output:
+
+monitoring-grafana   NodePort   80:30475/TCP
+
+# 8: Configure AWS Security Group
+
+Add an inbound rule to the Worker Node Security Group:
+
+Type: Custom TCP
+Protocol: TCP
+Port: 30475
+Source: Your Public IP or 0.0.0.0/0
+
+# 9: Access Grafana
+
+Get Worker Node Public IP:
+
+kubectl get nodes -o wide
+
+Open Grafana in a browser:
+
+http://<Worker-Public-IP>:30475
+
+
+# 10: Retrieve Grafana Password
+
+Run:
+
+kubectl get secret monitoring-grafana -n monitoring -o jsonpath="{.data.admin-password}" | base64 -d
+
+Login Credentials:
+
+Username: admin
+Password: <command output>
+
+# 11: Expose Prometheus Using NodePort - Convert Prometheus service to NodePort:
+
+kubectl patch svc monitoring-kube-prometheus-prometheus -n monitoring -p '{"spec":{"type":"NodePort"}}'
+
+Verify assigned NodePort:
+
+kubectl get svc -n monitoring
+
+Example Output:
+
+monitoring-kube-prometheus-prometheus   NodePort   9090:30662/TCP
+
+# 12: Configure Security Group for Prometheus
+
+Add another inbound rule:
+
+Type: Custom TCP
+Protocol: TCP
+Port: 30662
+Source: Your Public IP or 0.0.0.0/0
+
+# 13: Access Prometheus
+
+Open Prometheus:
+
+http://<Worker-Public-IP>:30662
+
+
+# 14: Verify Prometheus Targets
+
+Navigate to:
+
+Status -> Targets
+
+Verify that all targets display:
+
+UP
+
+# 15: Import Grafana Dashboards
+
+Dashboards -> Import
+
+Select Prometheus as the datasource and import the following dashboards:
+
+Dashboard ID: 15757
+Description : Kubernetes Cluster Monitoring
+
+Dashboard ID: 15759
+Description : Kubernetes Nodes
+
+Dashboard ID: 15760
+Description : Kubernetes Pods
+
+Dashboard ID: 1860
+Description : Node Exporter Full
+
+
+=======================================================
+Step 5: Email Integration With Jenkins and Plugin Setup
+=======================================================
+
+Install Email Extension Plugin in Jenkins
+Goto Manage Jenkins --> Plugins --> Available Plugins --> Search - Email Extension Template (Plugin) --> Install it and Restart Jenkins
+
+----------------------------------------------------
+
+Go to your Gmail Account and click on your Profile
+Then click on:
+Manage Your Google Account --> Security
+
+https://myaccount.google.com/security
+
+direct link:
+https://myaccount.google.com/apppasswords?
+
+-- 2 Step Verification should be enabled.
+
+Search for the word:
+App Passwords -> Create
+App Name = Jenkins
+
+Generate the App Password and copy it. 
+<GMAIL_APP_PASSWORD>
+
+----------------------------------------------------
+
+Once the plugin is installed in Jenkins goto:
+Manage Jenkins --> Configure --> System
+Under the E-mail Notification section configure the below details:
+
+SMTP Server = smtp.gmail.com
+Click on Advanced
+Enable:
+Use SMTP Authentication
+Configure:
+Username = <YOUR_EMAIL>
+Password = <GMAIL_APP_PASSWORD>
+(App Password generated from Gmail)
+Enable:
+Use SSL
+Configure SMTP Port:
+SMTP Port = 465
+Click on:
+
+Test Configuration
+----------------------------------------------------
+
+Now goto->Manage Jenkins --> Credentials
+Add Credentials:
+
+Kind = Username with password
+Username = <YOUR_EMAIL>
+Password = <GMAIL_APP_PASSWORD>
+(App Password)
+ID = mail
+Description = mail
+
+----------------------------------------------------
+
+This is just to verify the mail configuration. configure --> system --> Extended E-mail Notification
+Now under the Extended E-mail Notification section configure the details as shown below.
+Extended E-mail Notification
+Configure the following details:
+
+SMTP Server = smtp.gmail.com
+SMTP Port = 465
+Click on Advanced
+Configure:
+Credentials = mail
+Enable:
+Use SSL
+Under Default Triggers select:
+AlwaysFailure - Any
+Click on:
+Apply --> Save
+Now Jenkins mail integration is configured successfully.
+
+
+==================================================================================
+Step 6: Install Plugins like JDK, SonarQube Scanner, NodeJs, OWASP Dependency Check
+==================================================================================
+
+Install Required Plugins in Jenkins
+Goto:
+
+Manage Jenkins --> Plugins --> Available Plugins
+Install the below plugins:
+
+Eclipse Temurin Installer
+SonarQube Scanner
+NodeJS Plugin
+OWASP Dependency-Check
+Docker
+Docker Commons
+Docker Pipeline
+Docker API
+docker-build-step
+GitHub
+GitHub Integration Plugin
+
+After installation, restart Jenkins.
+
+
+
+Goto Manage Jenkins Tools →
+
+JDK installations --> Add JDK --> Name: jdk24, remove install oracle and add Install from adoptium.net and select jdk 24+36 (install automatically)
+
+SonarQube Scanner installations --> Add SonarQube Scanner --> Name=sonar-scanner, install automatically --> version: sonarscanner 7.2 latest
+
+NodeJS installations --> Add NodeJS --> Name: node24 --> install automatically --> install from nodejs.org -> version nodejs 24.5.0
+
+Dependency-Check installations --> Name: DP-Check --> install automatically --> Add installer --> select GitHub --> latest
+
+Docker installations --> Name: docker --> install automatically-> Add installer --> select docker.com -> latest
+
+GitHub Webhook Trigger --> Open Pipeline Job --> Configure --> Build Triggers --> Select "GitHub hook trigger for GITScm polling" --> Save
+
+GitHub Webhook --> GitHub Repository --> Settings --> Webhooks --> Add Webhook --> Payload URL: http://<JENKINS-IP>:8080/github-webhook/ --> Content Type: application/json --> Just the push event --> Add Webhook
+
+Webhook Verification --> Push code to GitHub --> Jenkins Pipeline starts automatically --> GitHub Settings --> Webhooks --> Recent Deliveries --> Verify Response Status: 200 OK
+
+
+=================================================
+Step 7: Configure Sonar Server in Manage Jenkins
+=================================================
+
+# Give permission to Docker socket
+sudo chmod 777 /var/run/docker.sock
+
+# Reload and restart Docker service
+sudo systemctl daemon-reload
+sudo systemctl restart docker.service
+
+# Run SonarQube container
+docker run -d --name sonar -p 9000:9000 sonarqube:lts-community
+
+
+Access SonarQube
+
+Open in browser:
+
+http://<EC2-Public-IP>:9000
+
+Default Credentials:
+
+Username: admin
+Password: admin
+
+---------------------------------------------------
+
+Go to your Sonarqube Server. http://<Sonarqube-Server-IP>:9000
+
+Click on Administration Security → Users on Generate Token Click on Tokens dashes and Update Token ---> Give it a name = stackoverflow and click on generate token
+
+<SONAR_TOKEN> 
+
+Goto Jenkins Dashboard ->  Manage Jenkins -> Credentials -> Add Secret Text.
+
+Kind =  Secret Text
+Scope =  Global
+Secret =  Paste the sonar key you copied
+ID =  sonar-token
+Desc =  sonar-token
+
+---------------------------------------------------
+
+Adding sonar server details in Jenkins:
+
+Goto Dashboard Manage Jenkins System --> SonarQube servers
+
+Checked Environment variables
+Name = sonar-server
+Server URL = http://<Sonarqube-Server-IP>:9000
+
+Server authentication token = sonar-token that you created in credentials
+
+
+In the Sonarqube Dashboard add a quality gate
+---------------------------------------------------
+
+Administration-> Configuration->Webhooks --> create
+
+Name = Jenkins
+URL = http://<Jenkins-Server-IP>/sonarqube-webhook/
+Secret =  empty
+
+
+
+=====================================
+Step 8: Configure Docker Credentials
+=====================================
+ 
+Manage Jenkins -> Credentials -> global -> add credential
+
+Kind Username and password
+
+Scope = Global
+Username = vickydockek11
+password = <DOCKER_PASSWORD>
+ID = docker
+Desc = docker
+
+
+sudo chmod 777 /var/run/docker.sock
+systemctl daemon-reload
+systemctl restart docker.service
+docker ps -a
+docker start sonar
+
+
+==================================================
+Step 9: Configure Kubernetes Cluster (KOPS)
+==================================================
+
+export KOPS_STATE_STORE=s3://devsecops-stackflow-bucket-1
+
+kops export kubecfg \
+--name vivek3.k8s.local \
+--admin
+
+kubectl get nodes
+
+--------------------------------------------------
+
+cat ~/.kube/config
+
+Copy the complete kubeconfig file.
+
+Save it as:
+
+secret.txt
+
+--------------------------------------------------
+
+Install Jenkins Plugins
+
+Kubernetes Credentials
+Kubernetes Client API
+Kubernetes
+Kubernetes CLI
+
+--------------------------------------------------
+
+Manage Jenkins
+→ Credentials
+→ Global Credentials
+→ Add Credentials
+
+Kind:
+Secret File
+
+File:
+secret.txt
+
+ID:
+k8s
+
+Description:
+k8s
+
+--------------------------------------------------
+
+Create Mongo Secret
+
+kubectl create secret generic mongo-secret \
+--from-literal=CONNECTION_URL='<MONGODB_CONNECTION_STRING>'
+--from-literal=JWT_SECRET='<JWT_SECRET>'
+
+Verify Secret:
+
+kubectl get secret mongo-secret
+
+kubectl describe secret mongo-secret
+
+----------------------------------------------------
+
+pipeline {
+
+    agent any
+
+    tools {
+        jdk 'jdk24'
+        nodejs 'node24'
+    }
+
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout from Git') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/vicky9168/stackflow-devsecops.git'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh '''
+                    $SCANNER_HOME/bin/sonar-scanner \
+                    -Dsonar.projectName=stackflow \
+                    -Dsonar.projectKey=stackflow
+                    '''
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh '''
+                cd client
+                npm install
+
+                cd ../server
+                npm install
+                '''
+            }
+        }
+
+        stage('TRIVY FS SCAN') {
+            steps {
+                sh 'trivy fs . > trivyfs.txt'
+            }
+        }
+
+        stage('Docker Build & Push') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'docker',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    sh '''
+                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+
+                    docker build -t vickydockek11/stackflow:latest .
+
+                    docker push vickydockek11/stackflow:latest
+
+                    docker logout
+                    '''
+                }
+            }
+        }
+
+        stage('TRIVY IMAGE SCAN') {
+            steps {
+                sh 'trivy image vickydockek11/stackflow:latest > trivyimage.txt'
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                dir('k8s') {
+                    withKubeConfig(
+                        credentialsId: 'k8s',
+                        namespace: 'default'
+                    ) {
+                        sh 'kubectl apply -f deployment.yml'
+                        sh 'kubectl apply -f service'
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            emailext(
+                attachLog: true,
+                subject: "${currentBuild.result}: ${env.JOB_NAME}",
+                body: """
+                Project: ${env.JOB_NAME}<br/>
+                Build Number: ${env.BUILD_NUMBER}<br/>
+                Build URL: ${env.BUILD_URL}<br/>
+                """,
+                to: '<YOUR_EMAIL>',
+                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
+            )
+        }
+    }
+}
