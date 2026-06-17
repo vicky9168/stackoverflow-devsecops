@@ -350,10 +350,10 @@ After successful deployment, verify that the Kubernetes service is running:
 kubectl get svc
 ```
 
-Get the NodePort or LoadBalancer URL and open it in your browser:
+Copy the External LoadBalancer URL and open it in your browser:
 
 ```text
-http://<public-ip>:<nodeport>
+http://<load-balancer-url>
 ```
 
 You should now be able to access the Stack Overflow Clone application.
