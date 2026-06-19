@@ -346,6 +346,11 @@ kubectl cluster-info
 
 # Delete Kops Cluster:
 
+# Use this command after completing the project 
+# or when you want to remove all Kubernetes cluster resources 
+# created by Kops (EC2 instances, load balancers, etc.).
+# This action will delete everything and cannot be undone.
+
 kops delete cluster --name vivek3.k8s.local --yes
 
 
@@ -811,7 +816,7 @@ pipeline {
         stage('Checkout from Git') {
             steps {
                 git branch: 'main',
-                    url: 'https://github.com/vicky9168/stackflow-devsecops.git'
+                url: 'https://github.com/vicky9168/stackoverflow-devsecops.git'
             }
         }
 
